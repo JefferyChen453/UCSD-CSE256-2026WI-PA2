@@ -50,18 +50,15 @@ class RotaryPositionalEmbedding(nn.Module):
         self.register_buffer("R", R, persistent=False)
 
     def forward(self, x: Tensor, token_positions: Tensor) -> Tensor:
-        R = repeat(self.R, "... -> b ...", b=x.shape[0]) # (b, max_seq_len, 2, d_k)
+        # Make sure token_positions shape be like: [0, 1, 2, ...]
+        if len(token_positions.shape) == 2:
+            token_positions = token_positions[0]
 
-        if len(token_positions.shape) == 1:
-            token_positions = repeat(token_positions, "... -> b ...", b=x.shape[0])
-        elif len(token_positions.shape) == 2:
-            token_positions = repeat(token_positions, "b ... -> (n b) ...", n=x.shape[0])
-        
         R = self.R[token_positions] 
         x_half1 = x[..., 0::2] # (q0 q2 q4 ...)
         x_half2 = -x[..., 1::2] # (-q1 -q3 -q5 ...)
         x_ = torch.stack([x_half2, x_half1], dim=-1).flatten(start_dim=-2) # (-q1 q0 -q3 q2 ...)
-        rot_1, rot_2 = R[:, :, 0, :], R[:, :, 1, :]
+        rot_1, rot_2 = R[:, 0, :], R[:, 1, :]
         ret = x * rot_1 + x_ * rot_2
 
         return ret

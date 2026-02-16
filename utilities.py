@@ -4,16 +4,16 @@ import torch
 
 from main import load_texts
 from tokenizer import SimpleTokenizer
-from transformer import TransformerEncoder
+from transformer import TransformerEncoder, TransformerLM
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 class Utilities:
     def __init__(self, tokenizer, model):
         self.tokenizer = tokenizer
-        self.model = model
+        self.model = model.eval
 
-    def sanity_check(self, sentence, block_size):
+    def sanity_check(self, sentence, block_size, model_type="encoder"):
         # Encode the sentence using the tokenizer
         wordids = self.tokenizer.encode(sentence)
 
@@ -26,7 +26,10 @@ class Utilities:
 
         # Process the input tensor through the encoder model
         # attn_maps: list of length num_layers, each (batch, num_heads, seq, seq)
-        _, attn_maps = self.model(input_tensor, mask=torch.ones(1, block_size).bool().to(device))
+        if model_type == "encoder":
+            _, attn_maps = self.model(input_tensor, mask=torch.ones(1, block_size).bool().to(device))
+        elif model_type == "decoder":
+            _, attn_maps = self.model(input_tensor)
         num_layers = len(attn_maps)
         num_heads = attn_maps[0].shape[1]
         print("Number of attention maps:", num_layers * num_heads, f"({num_layers} layers x {num_heads} heads)")
@@ -56,13 +59,15 @@ class Utilities:
                     ax.set_title(ax.get_title() + " (!)")
 
         plt.tight_layout()
-        plt.savefig("attention_maps_all.png")
+        plt.savefig(f"attention_maps_all_{model_type}.png")
         plt.show()
             
 
 if __name__ == "__main__":
     texts = load_texts('speechesdataset')
     tokenizer = SimpleTokenizer(' '.join(texts)) # create a 
+    
+    # ----------------------------  Encoder  ----------------------------
     encoder = TransformerEncoder(
         vocab_size=tokenizer.vocab_size,
         num_layers=4,
@@ -78,4 +83,23 @@ if __name__ == "__main__":
     encoder.load_state_dict(state_dict)
 
     utilities = Utilities(tokenizer, encoder)
-    utilities.sanity_check("Today we stand united in purpose and conviction, determined to strengthen our democracy, protect our shared freedoms, and build an economy that rewards hard work, restores opportunity, and renews faith in our common future.", 32)
+    utilities.sanity_check("Today we stand united in purpose and conviction, determined to strengthen our democracy, protect our shared freedoms, and build an economy that rewards hard work, restores opportunity, and renews faith in our common future.", 32, model_type="encoder")
+
+
+    # ----------------------------  Decoder  ----------------------------
+    decoder = TransformerLM(
+        vocab_size=tokenizer.vocab_size,
+        num_layers=4,
+        d_model=64,
+        num_heads=2,
+        pe_type="absolute",
+        max_seq_len=32,
+        theta=10000.0,
+        device=device
+    )
+    state_dict = torch.load("checkpoints/lm.pt", map_location=device)
+
+    decoder.load_state_dict(state_dict)
+
+    utilities = Utilities(tokenizer, decoder)
+    utilities.sanity_check("Today we stand united in purpose and conviction, determined to strengthen our democracy, protect our shared freedoms, and build an economy that rewards hard work, restores opportunity, and renews faith in our common future.", 32, model_type="decoder")

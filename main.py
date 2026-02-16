@@ -92,7 +92,9 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--mode", type=str, default="both", choices=["cls", "lm", "both"])
     parser.add_argument("--model", type=str, default="transformer")
-    parser.add_argument("--pe_type", type=str, default="absolute")
+    parser.add_argument("--pe_type", type=str, default="absolute", choices=["absolute", "rope"])
+    parser.add_argument("--attn_type", type=str, default="standard", choices=["standard", "deberta"],
+                        help="Attention type for CLS: standard (absolute/rope PE) or deberta (disentangled attention)")
     parser.add_argument("--theta", type=float, default=10000.0)
     # LM / transformer hyperparameters
     parser.add_argument("--batch_size", type=int, default=16, help="Number of independent sequences to process in parallel")
@@ -114,7 +116,7 @@ def main():
     parser.add_argument("--save_cls", type=str, default=None, help="Path to save classifier state_dict after training (e.g. classifier.pt)")
     parser.add_argument("--save_lm", type=str, default=None, help="Path to save language model state_dict after training (e.g. decoderLMmodel.pt)")
     parser.add_argument("--wandb", action="store_true", help="Enable wandb logging")
-    parser.add_argument("--wandb_project", type=str, default="CSE256_PA2", help="W&B project name")
+    parser.add_argument("--wandb_project", type=str, default="CSE256_PA2_CLS", help="W&B project name")
     parser.add_argument("--wandb_run_name", type=str, default=None, help="W&B run name (optional)")
     args = parser.parse_args()
 
@@ -156,7 +158,8 @@ def main():
             mode=args.cls_mode,
             max_seq_len=args.block_size,
             theta=args.theta,
-            device=device
+            device=device,
+            attn_type=args.attn_type
         )
         optimizer = torch.optim.Adam(classifier.parameters(), lr=args.learning_rate)
         criterion = nn.NLLLoss()

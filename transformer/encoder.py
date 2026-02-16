@@ -2,27 +2,34 @@ from einops import reduce
 from torch import nn
 import torch.nn.functional as F
 
-from transformer.attention import MultiHeadAttention
+from transformer.attention import MultiHeadAttention, DisentangledMultiHeadAttention
 from transformer.positional_embedding import (
     AbsolutePositionalEmbedding,
     RotaryPositionalEmbedding,
 )
 
 class EncoderBlock(nn.Module):
-    def __init__(self, d_model, num_heads, pe_type, max_seq_len=None, theta=None, device=None):
+    def __init__(self, d_model, num_heads, pe_type, max_seq_len=None, theta=None, device=None, attn_type="standard"):
         super().__init__()
+        self.attn_type = attn_type
         self.ln1 = nn.LayerNorm(d_model, device=device)
         self.ln2 = nn.LayerNorm(d_model, device=device)
-        self.attn_layer = MultiHeadAttention(d_model, num_heads, pe_type, max_seq_len, theta, device)
+        if attn_type == "deberta":
+            self.attn_layer = DisentangledMultiHeadAttention(d_model, num_heads, max_seq_len or 512, device)
+        else:
+            self.attn_layer = MultiHeadAttention(d_model, num_heads, pe_type, max_seq_len, theta, device)
         self.ffn_layer = nn.Sequential(
             nn.Linear(d_model, 4 * d_model).to(device),
             nn.ReLU(),
             nn.Linear(4 * d_model, d_model).to(device)
         )
 
-    def forward(self, x, mask=None):
+    def forward(self, x, mask=None, pe_type=None, positional_embedding=None):
         x = self.ln1(x)
-        attn_out, attn_score = self.attn_layer(x, mask=mask)
+        if self.attn_type == "deberta":
+            attn_out, attn_score = self.attn_layer(x, mask=mask)
+        else:
+            attn_out, attn_score = self.attn_layer(x, mask=mask, pe_type=pe_type, positional_embedding=positional_embedding)
         x = attn_out + x
         x = self.ln2(x)
         x = self.ffn_layer(x) + x
@@ -40,6 +47,7 @@ class TransformerEncoder(nn.Module):
         max_seq_len=None,
         theta=None,
         device=None,
+        attn_type="standard",
     ):
         super().__init__()
         self.vocab_size = vocab_size
@@ -50,25 +58,33 @@ class TransformerEncoder(nn.Module):
         self.max_seq_len = max_seq_len
         self.theta = theta
         self.device = device
+        self.attn_type = attn_type
 
         self.token_embeddings = nn.Embedding(vocab_size, d_model, device=device)
 
-        if pe_type == "absolute":
+        if attn_type == "deberta":
+            self.positional_embedding = None
+        elif pe_type == "absolute":
             self.positional_embedding = AbsolutePositionalEmbedding(self.d_model, self.max_seq_len, dropout=0.1, device=self.device)
         elif pe_type == "rope":
             self.positional_embedding = RotaryPositionalEmbedding(self.theta, self.d_k, self.max_seq_len, self.device)
+        else:
+            self.positional_embedding = None
 
         self.num_layers = num_layers
-        self.blocks = nn.ModuleList([EncoderBlock(self.d_model, self.num_heads, self.pe_type, self.max_seq_len, self.theta, self.device) for _ in range(num_layers)])
+        self.blocks = nn.ModuleList([
+            EncoderBlock(self.d_model, self.num_heads, self.pe_type, self.max_seq_len, self.theta, self.device, attn_type)
+            for _ in range(num_layers)
+        ])
 
     def forward(self, x, mask=None):
         x = self.token_embeddings(x)
-        if self.pe_type == "absolute":
+        if self.attn_type != "deberta" and self.positional_embedding is not None and self.pe_type == "absolute":
             x = self.positional_embedding(x)
 
         attn_maps = []
         for block in self.blocks:
-            x, attn_map = block(x, mask=mask)
+            x, attn_map = block(x, mask=mask, pe_type=self.pe_type, positional_embedding=self.positional_embedding)
             attn_maps.append(attn_map)
         return x, attn_maps
 
@@ -95,10 +111,10 @@ class LinearClassifier(nn.Module):
 
 
 class TransformerClassifier(nn.Module):
-    def __init__(self, vocab_size, num_layers, d_model, num_heads, pe_type, mode="mean", max_seq_len=None, theta=None, device=None):
+    def __init__(self, vocab_size, num_layers, d_model, num_heads, pe_type, mode="mean", max_seq_len=None, theta=None, device=None, attn_type="standard"):
         super().__init__()
 
-        self.encoder = TransformerEncoder(vocab_size, num_layers, d_model, num_heads, pe_type, max_seq_len, theta, device)
+        self.encoder = TransformerEncoder(vocab_size, num_layers, d_model, num_heads, pe_type, max_seq_len, theta, device, attn_type=attn_type)
         self.classifier = LinearClassifier(d_model, 100, 3, device=device)
         self.mode = mode
 
