@@ -11,6 +11,10 @@ Transformer-based speech classification (3-way) and causal language modeling on 
 ```bash
 uv sync
 source .venv/bin/activate
+
+python
+>>> import nltk
+>>> nltk.download('punkt_tab')
 ```
 
 ### Train Models
